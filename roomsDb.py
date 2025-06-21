@@ -93,3 +93,14 @@ def select_all_id_from_rooms_table():
     cursor.execute(query)
     results = cursor.fetchall()
     return results
+
+# update device_ip for a specific room
+def update_ip_in_rooms_table(room_id, new_ip):
+    conn = connection.get_connection()
+    cursor = conn.cursor()
+    query = """
+            UPDATE Rooms SET device_ip=%s WHERE id=%s
+            """
+    val = (new_ip, room_id)
+    cursor.execute(query, val)
+    conn.commit()

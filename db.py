@@ -5,6 +5,20 @@ import measurementsDb
 import roomsDb
 import sensorsDb
 
+import socket # Переконайтесь, що цей імпорт є або додайте його
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Ця IP-адреса не обов'язково має бути досяжною
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1' # Резервний варіант
+    finally:
+        s.close()
+    return IP
+
 # Глобальне з'єднання більше не використовуємо, створюємо нове для кожної операції
 def get_db_connection():
     return pymysql.connect(host='127.0.0.1',
@@ -23,18 +37,19 @@ def create_db(sensor, quick_start):
                 """
         cursor.execute(query)
         if cursor.fetchone() is None:
-            first_time_init(cursor, sensor)
+            first_time_init(conn, cursor, sensor)
         if quick_start == "on":
             return True  # Якщо quick_start = "on", повертаємо True одразу
         return run_menu(quick_start)  # Інакше викликаємо меню
     finally:
         conn.close()
 
-def first_time_init(cursor, sensor):
+def first_time_init(conn, cursor, sensor):
     query = """
             CREATE DATABASE microclimate_system
             """
     cursor.execute(query)
+    cursor.execute("USE microclimate_system")
     conn.commit()
     roomsDb.create_rooms_table()
     print()
@@ -45,7 +60,7 @@ def first_time_init(cursor, sensor):
     length = input("Enter your room length in meters (вкажіть довжину кімнати у метрах): ")
     height = input("Enter your room height in meters (вкажіть висоту кімнати у метрах): ")
     device = input("Enter name of this device (вкажіть назву цього пристрою): ")
-    ip_address = input("Enter IP-address of this device (вкажіть ІР-адресу пристрою): ")
+    ip_address = get_local_ip()
     room_id = roomsDb.insert_to_rooms_table(room, float(width), float(length), float(height),
                                             float(width) * float(length), ip_address, device)
 

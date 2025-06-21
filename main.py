@@ -9,9 +9,21 @@ import time
 import server
 import db
 import measurementsDb
+import socket # Додаємо імпорт
 
 # Ініціалізація DHT11 один раз за межами циклу
 dht_device = adafruit_dht.DHT11(board.D4)  # GPIO 4
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
 
 # parse command line parameters
 def read_command_line_params():
@@ -31,19 +43,7 @@ def read_command_line_params():
         step_s = sys.argv[3]
         quick_start = sys.argv[4]  # "on" як 5-й аргумент
     else:
-        print('ENGLISH description:')
         print('Usage: python3 main.py [DHT11|DHT22|DHT2302] <GPIO pin number> <step, s> [on]')
-        print('Example 1: python3 main.py DHT11 4 - '
-              'Read from an DHT11 connected to GPIO pin #4')
-        print('Example 2: python3 main.py DHT11 4 10 on - '
-              'Quick start with 10s interval from DHT11 on GPIO pin #4')
-        print('---------------------------')
-        print('УКРАЇНСЬКОЮ пояснення:')
-        print('Застосування: python3 main.py [DHT11|DHT22|DHT2302] <GPIO номер виводу> <період, с> [on]')
-        print('Приклад 1: python3 main.py DHT11 4 - '
-              'Прочитати дані з DHT11, підключеного до GPIO-виводу #4')
-        print('Приклад 2: python3 main.py DHT11 4 10 on - '
-              'Швидкий запуск із зчитуванням кожні 10 секунд з DHT11 на GPIO #4')
         sys.exit(1)
     return sensor, pin, step_s, quick_start
 
@@ -56,7 +56,7 @@ def read_from_dht(current_datetime):
             temperature = dht_device.temperature
             humidity = dht_device.humidity
             if humidity is not None and temperature is not None:
-                timestamp = current_datetime.strftime("%d-%m-%Y %H:%M:%S")
+                timestamp = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
                 print(f"{timestamp} Temp(температура)={temperature:0.1f}*C  Humidity(вологість)={humidity:0.1f}%")
                 measurementsDb.insert_to_measurements_table(1, str(temperature), timestamp)
                 measurementsDb.insert_to_measurements_table(2, str(humidity), timestamp)
@@ -64,29 +64,72 @@ def read_from_dht(current_datetime):
         except RuntimeError:
             pass  # Тиха обробка помилок
         time.sleep(1)  # Затримка між спробами
-    # Якщо всі спроби невдалі, просто пропускаємо вивід
     return False
 
-def run_server(step_s):
-    server.my_server(step_s)  # Передаємо step_s у my_server
+# Змінюємо функцію, щоб вона приймала сигнал на зупинку
+def run_server(step_s, shutdown_event):
+    server.my_server(step_s, shutdown_event)
 
-def run_system(sensor, pin, step_s):
-    while True:
-        current_datetime = datetime.datetime.now()
+# Змінюємо функцію, щоб вона приймала сигнал на зупинку
+def run_system(sensor, pin, step_s, shutdown_event):
+    # Замість while True, перевіряємо, чи не встановлено сигнал
+    while not shutdown_event.is_set():
+        current_datetime = datetime. datetime.now()
         read_from_dht(current_datetime)
-        time.sleep(int(step_s))
+        # Використовуємо join, щоб очікування можна було перервати
+        shutdown_event.wait(int(step_s))
 
 if __name__ == "__main__":
+    # 1. Зчитуємо параметри запуску з командного рядка
     sensor, pin, step_s, quick_start = read_command_line_params()
+
+    # 2. Викликаємо функцію налаштування бази даних.
+    #    Вона поверне True, якщо користувач в меню обрав "1. Run system" або якщо quick_start="on"
     should_run_system = db.create_db(sensor, quick_start)
 
-    if quick_start == "on" or should_run_system:
-        print(f"Starting system with sensor {sensor} on pin {pin}, step {step_s} seconds")
-        t1 = threading.Thread(target=run_server, args=(step_s,))
-        t2 = threading.Thread(target=run_system, args=(sensor, pin, step_s))
+    # 3. Перевіряємо, чи потрібно запускати основну логіку системи
+    if should_run_system:
+        # --- ВЕСЬ КОД ДЛЯ ЗАПУСКУ ТЕПЕР ЗНАХОДИТЬСЯ ВСЕРЕДИНІ ЦЬОГО "IF" ---
+        
+        my_ip = get_local_ip()
+        
+        try:
+            # Оновлюємо IP для першої кімнати (з id=1) в базі даних
+            # Переконайтесь, що у файлі db.py є рядок "import roomsDb"
+            db.roomsDb.update_ip_in_rooms_table(1, my_ip)
+            print("-" * 40)
+            print(f"!!! IP-адресу для Кімнати 1 оновлено на {my_ip} в базі даних. !!!")
+        except Exception as e:
+            print(f"!!! Помилка оновлення IP в базі даних: {e} !!!")
+
+        print("-" * 40)
+        print(f"!!! СЕРВЕР ЗАПУСКАЄТЬСЯ НА IP: {my_ip} !!!")
+        print(f"!!! Введіть цю IP-адресу у мобільному додатку. !!!")
+        print("-" * 40)
+        print(f"Запуск системи: датчик={sensor}, пін={pin}, інтервал={step_s} секунд")
+
+        # Створюємо подію для "граціозної" зупинки потоків
+        shutdown_event = threading.Event()
+        
+        t1 = threading.Thread(target=run_server, args=(step_s, shutdown_event))
+        t2 = threading.Thread(target=run_system, args=(sensor, pin, step_s, shutdown_event))
+        
         t1.start()
         t2.start()
+
+        try:
+            # Головний потік чекає тут, доки не буде натиснуто Ctrl+C
+            while t1.is_alive() and t2.is_alive():
+                t1.join(timeout=1.0) # Чекаємо з таймаутом, щоб не блокуватись назавжди
+        except KeyboardInterrupt:
+            print("\nОтримано сигнал на зупинку... (Ctrl+C)")
+            shutdown_event.set()
+        
+        # Чекаємо, поки потоки коректно завершаться
         t1.join()
         t2.join()
+        print("Роботу системи завершено.")
+
     else:
-        print("System configuration completed. Run with 'on' or select 'Run system' to start.")
+        # Цей блок виконається, тільки якщо quick_start="off" і користувач у меню обрав вихід
+        print("Налаштування завершено. Запустіть з параметром 'on' або виберіть '1. Run system' в меню.")

@@ -6,7 +6,7 @@ import roomsDb
 import sensorsDb
 
 # connection data
-HOST = "192.168.31.234"
+HOST = "0.0.0.0"
 PORT = 50028
 
 # keywords
@@ -24,11 +24,11 @@ GET_ACTUAL = "GET_ACTUAL"
 SEND_ACTUAL = "SEND_ACTUAL"
 
 # run server
-def my_server(step):
+def my_server(step, shutdown_event):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        print("Server " + str(HOST) + " started to wait for the client on port "
-              + str(PORT))
+#        print("Server " + str(HOST) + " started to wait for the client on port "
+ #             + str(PORT))
         s.bind((HOST, PORT))
         s.listen(1)
         while True:
@@ -169,7 +169,7 @@ def client_handler(conn, addr, step):
                 datetime_1 = str_arr[1]
                 datetime_2 = str_arr[2]
                 measurement_str = find_all_measurements_of_sensor\
-                    (sensor_id, datetime_1+"%", datetime_2+"%")
+                    (sensor_id, datetime_1, datetime_2)
                 if measurement_str is not None:
                     conn.sendall(measurement_str.encode('utf-8'))
                 else:
